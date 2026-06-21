@@ -2,6 +2,7 @@ package com.search_typeahead.backend.controller;
 
 import com.search_typeahead.backend.dto.SearchResponse;
 import com.search_typeahead.backend.model.QueryEntry;
+import com.search_typeahead.backend.model.SearchHistory;
 import com.search_typeahead.backend.service.SearchService;
 import org.springframework.web.bind.annotation.*;
 
@@ -51,6 +52,11 @@ public class SearchController {
     @GetMapping("/trending")
     public ArrayList<QueryEntry> getTrending(){
         return searchService.getTrending();
+    }
+
+    @GetMapping("/history")
+    public ArrayList<SearchHistory> getHistory(){
+        return searchService.getHistory();
     }
 
 }

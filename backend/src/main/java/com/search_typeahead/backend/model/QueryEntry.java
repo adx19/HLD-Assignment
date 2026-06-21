@@ -14,11 +14,13 @@ public class QueryEntry {
     private Long id;
     private String query;
     private int count;
+    private double trendingScore;
     public QueryEntry(){}
 
     public QueryEntry(String q, int c){
         this.query = q;
         this.count = c;
+        this.trendingScore = count;
     }
 
     public Long getId() {
@@ -43,5 +45,13 @@ public class QueryEntry {
 
     public void setQuery(String query) {
         this.query = query;
+    }
+
+    public double getTrendingScore() {
+        return trendingScore;
+    }
+
+    public void setTrendingScore(double trendingScore) {
+        this.trendingScore = trendingScore;
     }
 }

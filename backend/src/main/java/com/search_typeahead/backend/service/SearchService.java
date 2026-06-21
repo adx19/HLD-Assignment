@@ -1,16 +1,19 @@
 package com.search_typeahead.backend.service;
 
 import com.search_typeahead.backend.model.QueryEntry;
+import com.search_typeahead.backend.model.SearchHistory;
 import com.search_typeahead.backend.repository.QueryRepository;
+import com.search_typeahead.backend.repository.SearchHistoryRepository;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
+import org.springframework.scheduling.annotation.Scheduled;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class SearchService {
@@ -19,9 +22,12 @@ public class SearchService {
     private final QueryRepository queryRepository;
     private final RedisService redisService;
     private final ObjectMapper mapper = new ObjectMapper();
-    public SearchService(QueryRepository queryRepository, RedisService redisService){
+    private final ConcurrentHashMap<String, Integer> pendingUpdates = new ConcurrentHashMap<>();
+    private final SearchHistoryRepository historyRepository;
+    public SearchService(QueryRepository queryRepository, RedisService redisService, SearchHistoryRepository searchHistoryRepository){
         this.queryRepository = queryRepository;
         this.redisService = redisService;
+        this.historyRepository = searchHistoryRepository;
         queries = new ArrayList<>();
         prefixIndex = new HashMap<>();
 
@@ -142,15 +148,16 @@ public class SearchService {
     }
 
     public void recordClick(String query){
-
+        historyRepository.save(new SearchHistory(query));
         for(QueryEntry q: queries){
             if(q.getQuery().equalsIgnoreCase(query)){
                 q.setCount(q.getCount() + 1);
-                queryRepository.save(q);
+                q.setTrendingScore(q.getTrendingScore() + 1);
                 break;
-
             }
         }
+
+        pendingUpdates.put(query.toLowerCase(), pendingUpdates.getOrDefault(query.toLowerCase(), 0) + 1);
     }
     public ArrayList<QueryEntry> getQueries(){
         return queries;
@@ -171,7 +178,7 @@ public class SearchService {
             trending.add(q);
         }
 
-        trending.sort((a,b) -> b.getCount() - a.getCount());
+        trending.sort((a,b) -> Double.compare(b.getTrendingScore() ,a.getTrendingScore()));
 
         return new ArrayList<>(trending.subList(0, Math.min(10, trending.size())));
     }
@@ -198,10 +205,60 @@ public class SearchService {
             result.add(q);
         }
 
-        result.sort((a,b) -> b.getCount() - a.getCount());
+        result.sort((a,b) -> Double.compare(b.getTrendingScore(), a.getTrendingScore()));
 
         return new ArrayList<>(
                 result.subList(0, Math.min(3, result.size()))
         );
+    }
+
+    @Scheduled(fixedRate=10000)
+    public void flushBatchUpdates(){
+        if(pendingUpdates.isEmpty()){
+            return;
+        }
+
+        HashMap<String, Integer> batch = new HashMap<>(pendingUpdates);
+
+        pendingUpdates.clear();
+
+        System.out.println("FLUSHING " + batch.size() + " pending updates");
+
+        for(String query: batch.keySet()){
+            int increment = batch.get(query);
+
+            System.out.println(query + " -> + " + increment);
+
+            for(QueryEntry q: queries){
+                if(q.getQuery().equalsIgnoreCase(query)){
+                    queryRepository.save(q);
+                    invlaidatePrefixes(query);
+                    break;
+                }
+            }
+        }
+    }
+
+    public ArrayList<SearchHistory> getHistory(){
+        return historyRepository.findTop10ByOrderBySearchedAtDesc();
+    }
+
+    @Scheduled(fixedRate = 84600000)
+    public void applyDecay(){
+        System.out.println("DAILY DECAY RUNNING");
+        queryRepository.applyDecayToAll();
+        queries = new ArrayList<>(queryRepository.findAll());
+    }
+
+    private void invlaidatePrefixes(String query){
+        query = query.toLowerCase();
+
+        for(int i = 1; i <= query.length(); i++){
+            String prefix = query.substring(0, i);
+
+            redisService.delete("search:" + prefix);
+
+            System.out.println("CACHE INVALIDATED: search: " + prefix);
+        }
     }
 }

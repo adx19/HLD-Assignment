@@ -166,3 +166,27 @@ body {
 .trending-item:hover {
   background: #f8f9fa;
 }
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  padding: 12px 16px;
+  cursor: pointer;
+}
+
+.history-item:hover{
+  background: #f5f5f5;
+
+}
+
+.loading-item{
+  padding: 12px;
+  color: #666;
+  font-style: italic;
+}
+
+.selected-item{
+  background: #f1f3f4;
+}
