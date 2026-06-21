@@ -61,20 +61,31 @@ function App() {
       method: "POST",
     });
     
-    setResults(
-      suggestions.map(item => ({
-        title:item.query, 
-        url: `https://www.google.com/search?q=${encodeURIComponent(item.query)}`
-      }))
-    )
+    setResults([
+      {
+        title: searchQuery,
+        url: `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`
+      }
+    ]);
+
+    setFocused(false);
     setSearchedTerm(searchQuery);
-    setQuery("");
-    setSuggestions([]);
+    setQuery(searchQuery);
     setSelectedIndex(-1);
     
   }
 
-  const filteredHistory = history.filter(item => item.query.toLowerCase().startsWith(query.toLowerCase()));
+  const filteredHistory = history
+    .filter(item =>
+      item.query.toLowerCase().startsWith(query.toLowerCase())
+    )
+    .filter(
+      (item, index, self) =>
+        index ===
+        self.findIndex(
+          h => h.query.toLowerCase() === item.query.toLowerCase()
+        )
+    );
 
   const combinedSuggestions = [...prefixTrending, ...filteredSuggestions];
 
@@ -88,7 +99,7 @@ function App() {
             type="text"
             placeholder="Search..."
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {setQuery(e.target.value); setFocused(true)}}
             onFocus={()=>setFocused(true)}
             onBlur={()=>setTimeout(() => setFocused(false), 200)}
             onKeyDown={(e) => {
@@ -130,7 +141,7 @@ function App() {
       
       {focused && (
         <div className="suggestions">
-          {query === "" && filteredHistory.length > 0 && (
+          {filteredHistory.length > 0 && (
             <>
               <div className="history-header">
                 Recent Searches
@@ -163,11 +174,21 @@ function App() {
               </>
             )}
             {filteredSuggestions.length > 0 ? (
-              filteredSuggestions.map((item, index) => (
-                <div key={index} className={`suggestion-item ${selectedIndex === index ? "selected-item" : ""}`} onClick={() => performSearch(item.query)}>
-                  {item.query}
-                </div>
-              ))
+              filteredSuggestions.map((item, index) => {
+                const actualIndex = prefixTrending.length + index;
+
+                return (
+                  <div
+                    key={index}
+                    className={`suggestion-item ${
+                      selectedIndex === actualIndex ? "selected-item" : ""
+                    }`}
+                    onClick={() => performSearch(item.query)}
+                  >
+                    {item.query}
+                  </div>
+                );
+              })
             ) : (
               <div className="suggestion-item">
                 No suggestions found
