@@ -1,61 +1,207 @@
 package com.search_typeahead.backend.service;
 
 import com.search_typeahead.backend.model.QueryEntry;
+import com.search_typeahead.backend.repository.QueryRepository;
 import org.springframework.stereotype.Service;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 
 @Service
 public class SearchService {
     private ArrayList<QueryEntry> queries;
     private HashMap<String, ArrayList<QueryEntry>> prefixIndex;
-
-
-    public SearchService(){
+    private final QueryRepository queryRepository;
+    private final RedisService redisService;
+    private final ObjectMapper mapper = new ObjectMapper();
+    public SearchService(QueryRepository queryRepository, RedisService redisService){
+        this.queryRepository = queryRepository;
+        this.redisService = redisService;
         queries = new ArrayList<>();
         prefixIndex = new HashMap<>();
-        queries.add(new QueryEntry("iphone", 100000));
-        queries.add(new QueryEntry("iphone 15", 85000));
-        queries.add(new QueryEntry("iphone charger", 60000));
-        queries.add(new QueryEntry("java tutorial", 40000));
-        queries.add(new QueryEntry("spring boot", 35000));
 
-        buildIndex();
+        loadQueriesFromCSV();
     }
 
 
     public ArrayList<QueryEntry> search(String prefix){
+        System.out.println("SEARCH CALLED: " + prefix);
         prefix = prefix.toLowerCase();
         if(!prefixIndex.containsKey(prefix)){
             return new ArrayList<>();
         }
 
+        String cacheKey = "search:" + prefix;
+
+        String cached = redisService.get(cacheKey);
+
+        if(cached != null){
+           try{
+               System.out.println("CACHE HIT: " + prefix);
+
+               return new ArrayList<>(Arrays.asList(mapper.readValue(cached, QueryEntry[].class)));
+           } catch(Exception e){
+               e.printStackTrace();
+           }
+        }
+
+
+
         ArrayList<QueryEntry> ans = prefixIndex.get(prefix);
 
         ans.sort((a,b) -> b.getCount() - a.getCount());
 
+        ArrayList<QueryEntry> result;
+
         if(ans.size() > 10){
-            return new ArrayList<>(ans.subList(0,10));
+            result = new ArrayList<>(ans.subList(0,10));
+        }
+        else{
+            result = ans;
         }
 
-        return ans;
+        try {
+            redisService.set(
+                    cacheKey,
+                    mapper.writeValueAsString(result)
+            );
+        }
+        catch(Exception e){
+            e.printStackTrace();
+        }
+
+        System.out.println("CACHE MISS: " + prefix);
+
+        return result;
     }
 
     public void buildIndex(){
         for(int i = 0; i<queries.size(); i++){
+            QueryEntry entry = queries.get(i);
             String word = queries.get(i).getQuery();
             for(int j = 1; j<=word.length(); j++){
                 String prefix = word.substring(0, j).toLowerCase();
                 if(prefixIndex.containsKey(prefix)){
-                    prefixIndex.get(prefix).add(new QueryEntry(word, queries.get(i).getCount()));
+                    prefixIndex.get(prefix).add(entry);
                 }else{
                     ArrayList<QueryEntry> list = new ArrayList<>();
-                    list.add(new QueryEntry(word, queries.get(i).getCount()));
+                    list.add(entry);
                     prefixIndex.put(prefix, list);
                 }
             }
         }
+    }
+
+    public void loadQueriesFromCSV(){
+        try{
+
+            long rows = queryRepository.count();
+
+            System.out.println("Rows in DB: " + rows);
+
+            if(rows > 0){
+                System.out.println("Database already populated");
+                queries = new ArrayList<>(queryRepository.findAll());
+
+                buildIndex();
+                return;
+            }
+
+            InputStream inputStream = getClass().getClassLoader().getResourceAsStream("queries.csv");
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+
+            String line;
+
+            reader.readLine();
+
+            while((line = reader.readLine()) != null){
+
+                String[] parts = line.split(",");
+
+                String query = parts[0];
+
+                int count = Integer.parseInt(parts[1]);
+
+                QueryEntry entry = new QueryEntry(query, count);
+
+                queryRepository.save(entry);
+            }
+
+            System.out.println("CSV imported successfully");
+
+        } catch (Exception e){
+            e.printStackTrace();
+
+        }
+    }
+
+    public void recordClick(String query){
+
+        for(QueryEntry q: queries){
+            if(q.getQuery().equalsIgnoreCase(query)){
+                q.setCount(q.getCount() + 1);
+                queryRepository.save(q);
+                break;
+
+            }
+        }
+    }
+    public ArrayList<QueryEntry> getQueries(){
+        return queries;
+    }
+
+    public ArrayList<QueryEntry> getTrending(){
+        ArrayList<QueryEntry> trending = new ArrayList<>();
+
+        for(QueryEntry q : queries){
+            String query = q.getQuery().trim();
+
+            if(query.length() < 2) continue;
+
+            if(query.equals("-")) continue;
+
+            if(query.equals(".")) continue;
+
+            trending.add(q);
+        }
+
+        trending.sort((a,b) -> b.getCount() - a.getCount());
+
+        return new ArrayList<>(trending.subList(0, Math.min(10, trending.size())));
+    }
+
+    public ArrayList<QueryEntry> getTrendingByPrefix(String prefix){
+        prefix = prefix.toLowerCase();
+
+        ArrayList<QueryEntry> result = new ArrayList<>();
+
+        for(QueryEntry q: queries){
+
+            String query = q.getQuery().toLowerCase();
+
+            if(!query.startsWith(prefix)){
+                continue;
+            }
+
+            if(query.length() < 2) continue;
+
+            if(query.equals("-")) continue;
+
+            if(query.equals(".")) continue;
+
+            result.add(q);
+        }
+
+        result.sort((a,b) -> b.getCount() - a.getCount());
+
+        return new ArrayList<>(
+                result.subList(0, Math.min(3, result.size()))
+        );
     }
 }
